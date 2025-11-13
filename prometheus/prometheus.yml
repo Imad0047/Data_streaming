@@ -1,0 +1,4 @@
+scrape_configs:
+  - job_name: 'spark'
+    static_configs:
+      - targets: ['spark-master-exporter:5556', 'spark-worker-exporter:5556']
