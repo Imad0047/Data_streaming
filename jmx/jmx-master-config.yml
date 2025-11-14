@@ -1,0 +1,7 @@
+---
+hostPort: spark-master:9999
+ssl: false
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+- pattern: ".*"

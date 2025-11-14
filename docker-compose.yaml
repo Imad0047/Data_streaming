@@ -27,10 +27,15 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
+      CONFLUENT_METRICS_ENABLE: "false"
+      CONFLUENT_SUPPORT_CUSTOMER_ID: "anonymous"
       KAFKA_JMX_PORT: 9101
       KAFKA_JMX_HOSTNAME: broker
-      CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
     networks:
       - confluent
 
@@ -49,7 +54,7 @@ services:
       - confluent
 
   # ====================================================
-  # Spark master
+  # Spark master - FIXED JMX CONFIGURATION
   # ====================================================
   spark-master:
     image: apache/spark:3.5.1
@@ -59,7 +64,8 @@ services:
       - SPARK_NO_DAEMONIZE=true
       - SPARK_MASTER_PORT=7077
       - SPARK_UI_PORT=8080
-      - SPARK_DAEMON_JAVA_OPTS="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.rmi.port=9999 -Djava.rmi.server.hostname=spark-master"
+      # Use SPARK_MASTER_OPTS instead of JAVA_OPTS for master
+      - SPARK_MASTER_OPTS=-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.rmi.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=spark-master -Dcom.sun.management.jmxremote.local.only=false
     ports:
       - "8080:8080"
       - "7077:7077"
@@ -68,26 +74,27 @@ services:
       - confluent
     command: >
       bash -c "
-      /opt/spark/sbin/start-master.sh &&
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master &
       tail -f /dev/null
       "
 
-  # Exporter sidecar for spark-master
   spark-master-exporter:
     image: bitnami/jmx-exporter:latest
     container_name: spark-master-exporter
     environment:
-      - JVM_TARGET_HOST=spark-master
-      - JVM_TARGET_PORT=9999
+      - JVM_OPTS=-Dcom.sun.management.jmxremote.local.only=false
+    volumes:
+      - ./jmx/jmx-master-config.yml:/opt/bitnami/jmx-exporter/config.yml:ro
     ports:
-      - "8090:8080"
+      - "8090:5556"
     depends_on:
       - spark-master
     networks:
       - confluent
+    command: ["5556", "/opt/bitnami/jmx-exporter/config.yml"]
 
   # ====================================================
-  # Spark worker
+  # Spark worker - FIXED JMX CONFIGURATION
   # ====================================================
   spark-worker:
     image: apache/spark:3.5.1
@@ -100,31 +107,33 @@ services:
       - SPARK_WORKER_CORES=2
       - SPARK_WORKER_MEMORY=1G
       - SPARK_MASTER=spark://spark-master:7077
-      - SPARK_DAEMON_JAVA_OPTS="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.rmi.port=9999 -Djava.rmi.server.hostname=spark-worker"
+      # Use SPARK_WORKER_OPTS instead of JAVA_OPTS for worker
+      - SPARK_WORKER_OPTS=-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.rmi.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=spark-worker -Dcom.sun.management.jmxremote.local.only=false
     ports:
       - "8082:8082"
-      - "9998:9999"   # Worker JMX port mapped
+      - "9998:9999"
     networks:
       - confluent
     command: >
       bash -c "
-      /opt/spark/sbin/start-worker.sh spark://spark-master:7077 &&
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 &
       tail -f /dev/null
       "
 
-  # Exporter sidecar for spark-worker
   spark-worker-exporter:
     image: bitnami/jmx-exporter:latest
     container_name: spark-worker-exporter
     environment:
-      - JVM_TARGET_HOST=spark-worker
-      - JVM_TARGET_PORT=9999
+      - JVM_OPTS=-Dcom.sun.management.jmxremote.local.only=false
+    volumes:
+      - ./jmx/jmx-worker-config.yml:/opt/bitnami/jmx-exporter/config.yml:ro
     ports:
-      - "8091:8080"
+      - "8091:5556"
     depends_on:
       - spark-worker
     networks:
       - confluent
+    command: ["5556", "/opt/bitnami/jmx-exporter/config.yml"]
 
   # ====================================================
   # Prometheus & Grafana
@@ -137,8 +146,11 @@ services:
       - "9090:9090"
     restart: unless-stopped
     volumes:
-      - ./prometheus:/etc/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prom_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
     networks:
       - confluent
 
@@ -152,12 +164,16 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=grafana
     volumes:
-      - ./grafana/grafana.yaml:/etc/grafana/provisioning/datasources/grafana.yaml
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - grafana_data:/var/lib/grafana
     networks:
       - confluent
+    depends_on:
+      - prometheus
 
 volumes:
   prom_data:
+  grafana_data:
 
 networks:
   confluent:
