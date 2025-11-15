@@ -4,7 +4,7 @@
 Real-time weather data processing pipeline using Apache Kafka, Spark, and monitoring with Prometheus/Grafana.
 
 ## Architecture
-
+![alt text](images/Architecture22.jpg)
 
 ## 🧰Technologies Used
 - Apache Kafka
